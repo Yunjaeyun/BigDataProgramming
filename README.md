@@ -1,3 +1,4 @@
+Markdown
 # 🎸 악기 메타데이터 및 유저 취향 기반 맞춤형 매물 추천 파이프라인 (Shared DB Batch Architecture)
 
 ## 1. 문제 정의 (Problem Definition)
@@ -38,3 +39,81 @@
 ## 3. 구현 계획 (Implementation Plan)
 
 ### 3.1 전체 아키텍처 파이프라인
+
+[외부 뮬 데이터 수집] ──> Python Crawler ──> HDFS (/raw)
+│
+[내부 서비스 매물/로그] ──> DB덤프(CSV)  ──> HDFS (/app_data)
+│
+[PySpark 분산 연산]
+- 비정형 텍스트 정제/정규화
+- Cosine Similarity 유사도 연산
+│
+HDFS (/processed)
+│
+[Hive External Table]
+│
+[PostgreSQL Production]
+- user_recommendation 테이블 적재
+│
+[Java Spring Boot Server]
+- QueryDSL을 통한 초고속 조회
+
+
+### 3.2 단계별 상세 구현
+1. **데이터 수집 및 적재 (`src/ingest/`):** Python을 통해 뮬의 9개 카테고리 매물 명세와 텍스트를 크롤링하여 일별 CSV로 HDFS에 적재합니다. (`time.sleep()`을 적용하여 윤리적 수집 준수)
+2. **Spark 기반 텍스트 정제 및 특징 추출 (`src/pipeline/`):** 제각각인 악기 명칭(예: "미펜 텔레", "Fender Telecaster")을 표준 이름으로 정규화하고, 정규표현식을 통해 픽업/기능별 태그 벡터를 생성합니다.
+3. **추천 매트릭스 연산 (`src/recommend/`):** PySpark를 통해 유저-아이템 간 콘텐츠 기반 필터링 알고리즘을 수행하고, 내부 PostgreSQL에서 가져온 유저별 '좋아요' 및 '최근 검색어' 가중치를 결합하여 최종 추천 리스트를 도출합니다.
+4. **프로덕션 DB 동기화 (`src/db_sync/`):** 연산 완료 후 오직 `(user_id, recommended_item_ids, updated_at)` 형태의 정제된 경량 결과물만 추출하여 프로덕션 PostgreSQL DB로 직접 적재합니다.
+5. **Spring Boot 서빙:** 스프링 백엔드에서는 복잡한 Python 연산 없이, 이미 계산되어 저장된 PostgreSQL 테이블을 QueryDSL로 단순 select 하여 유저 홈 화면에 고성능으로 뿌려줍니다.
+
+---
+
+## 4. GitHub Repository 구조
+
+mule-recommendation-batch-pipeline/
+├── README.md                    # 프로젝트 개요 및 연동 가이드
+├── data/
+│   ├── README.md                # 9개 메인 카테고리 스키마 정의
+│   └── sample/                  # 수집 데이터 샘플
+├── src/
+│   ├── ingest/                  # 데이터 수집 (Python)
+│   │   └── crawler.py
+│   ├── pipeline/                # Spark 데이터 전처리 및 태깅
+│   │   └── spark_cleaner.py
+│   ├── recommend/               # PySpark 추천 알고리즘 엔진
+│   │   └── recommender_engine.py
+│   ├── analyze/                 # Hive 기반 분석 및 데이터 검증
+│   │   ├── hive_ddl.hql
+│   │   └── validation.sql
+│   └── db_sync/                 # PostgreSQL 프로덕션 DB 적재 스크립트
+│       └── postgres_loader.py
+└── infra/                       # HDP Sandbox 및 DB 연결 설정
+
+
+---
+
+## 5. 실행 방법 (HDP Sandbox & Production Link)
+
+```bash
+# 1. 외부 악기 데이터 및 매물 데이터 수집
+python src/ingest/crawler.py
+
+# 2. PySpark 추천 연산 실행 (오프라인 배치 가동)
+spark-submit --master local[*] src/recommend/recommender_engine.py
+
+# 3. Hive를 통한 추천 정합성 및 분포 검증
+hive -f src/analyze/validation.sql
+
+# 4. 분석 결과 데이터를 프로덕션 PostgreSQL로 배치 적재
+python src/db_sync/postgres_loader.py
+6. AI Tool Usage
+Claude: 프로젝트 주제 구체화 및 README 구조 설계 도움, 기술 스택 선정 시 비용 구조 조사
+
+7. 참고 자료
+Apache Spark 공식 문서
+
+Apache Hive 공식 문서
+
+뮬(Mule) 중고악기 장터
+
+Python BeautifulSoup 문서
