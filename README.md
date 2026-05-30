@@ -1,182 +1,102 @@
-# BigDataProgramming
-# 🎸 중고 악기 시세 분석 파이프라인: 적정가 산출 시스템
+🎸 악기 메타데이터 및 유저 취향 기반 맞춤형 매물 추천 파이프라인 (Shared DB Batch Architecture)
+1. 문제 정의 (Problem Definition)
+1.1 배경 및 동기
+비즈니스 문제: 본 서비스는 최근 이펙터 단일 카테고리에서 일렉기타, 베이스, 신스, 음향장비 등 9개 메인 카테고리로 대규모 업데이트를 단행함. 카테고리가 확장됨에 따라 유저가 원하는 매물을 찾는 탐색 비용이 급증했으며, 이는 거래 성사율 저하 및 유저 이탈로 이어질 수 있음.
 
-## 1. 문제 정의 (Problem Definition)
+기술적 제약 (Lean Startup): 누적 회원 2,400명 규모의 스타트업에서 실시간 추천 API 서버(Python 계열)나 상시 구동형 인프라(Elasticsearch 등)를 구축하는 것은 심각한 오버엔지니어링이며 고정 비용 부담을 초래함.
 
-### 1.1 배경 및 동기
+해결 방안: 외부 커뮤니티(Mule)의 방대한 악기 메타데이터와 서비스 내 유저 행동 데이터를 활용하되, '오프라인 배치(Batch) 처리' 후 기존 자바 스프링 부트(Java Spring Boot) 환경의 프로덕션 DB에 결과만 이식하는 비용 효율적(Cost-Effective) 추천 파이프라인을 구축함.
 
-중고 악기 시장은 표준화된 가격 지표가 존재하지 않는다. 동일한 모델이라도 상태, 연식, 판매자의 주관에 따라 가격 편차가 크며, 이로 인해 다음과 같은 문제가 발생한다.
+1.2 분석 및 추천 목표
+Q1. 카테고리/태그 기반 유사 매물 매칭: 유저가 특정 이펙터(예: 101 오버드라이브)를 볼 때, 메타데이터 유사도(브랜드, 기능, 가격대)가 높은 다른 카테고리의 연관 매물을 추천할 수 있는가?
 
-- **구매자**: "이 가격이 적정한지" 판단할 객관적 근거가 없어 구매를 망설임
-- **판매자**: 시세를 모르고 지나치게 높게 올려 매물이 장기간 미판매 상태로 방치됨
-- **결과**: 거래 성사율 하락, 플랫폼 내 유저 이탈 증가
+Q2. 유저 취향 선호도 매트릭스 산출: 유저의 과거 조회/하트 로그를 기반으로 9개 메인 카테고리별 선호도 점수를 배치로 계산할 수 있는가?
 
-본 프로젝트는 국내 최대 악기 커뮤니티 **뮬(Mule)**의 중고 장터 데이터를 대규모로 수집·분석하여, 브랜드/모델별 **적정가 레인지**와 **꿀매물 판별 기준**을 도출하는 빅데이터 파이프라인을 구축한다.
+Q3. 프로덕션 시스템과의 저비용 연동: 파이썬(Python) 기반 빅데이터 연산 결과물과 자바(Java) 기반 프로덕션 서버를 추가 인프라 비용 없이 안정적으로 결합할 수 있는가?
 
-### 1.2 분석 목표 (핵심 질문 3가지)
+1.3 사용 데이터
+외부 데이터: 뮬(Mule) 장터 최근 1년치 게시글 데이터 (100MB 이상, 악기 메타데이터 추출용)
 
-1. **브랜드/모델별 적정가 레인지는?**
-   - 사분위(Q1~Q3) 기반 가격 분포를 산출하여 "Boss DD-7 적정가: 9~12만원" 형태의 시세 정보 제공
-2. **판매 완료 매물 vs 미판매 매물의 가격 차이는?**
-   - 실제 거래가 성사된 매물의 가격대를 분석하여 "적정가 이하 매물이 평균 몇 일 내 판매 완료되는가" 검증
-3. **카테고리별 시세 변동 추이와 감가율은?**
-   - 이펙터, 일렉기타, 앰프 등 카테고리별 월간 시세 추이를 분석하고, 특정 모델의 시간 경과에 따른 감가율 산출
+내부 데이터: 서비스 내 매물 데이터 (400여 건의 기존 이펙터 및 신규 악기 메타데이터) + 유저 세션별 카테고리 탐색 가상 로그
 
-### 1.3 사용 데이터
+2. 기술 스택 (Tech Stack)
+2.1 서비스 프로덕션 스택 (기존 인프라)
+Backend: Java 17, Spring Boot 3.x
 
-| 항목 | 내용 |
-|------|------|
-| **데이터 출처** | 뮬(mule.co.kr) 중고 장터 웹 크롤링 |
-| **수집 대상** | 게시글 제목, 판매 가격, 브랜드, 모델명, 악기 카테고리, 상태(A/B/C급), 게시 일시, 판매 완료 여부, 거래 지역 |
-| **수집 범위** | 최근 6개월 ~ 1년치 장터 게시글 (전 카테고리: 이펙터, 일렉기타, 통기타, 베이스, 앰프, 드럼, 건반, 음향장비 등) |
-| **목표 용량** | 누적 100MB 이상 (일별 크롤링 스크립트를 통해 분할 수집) |
-| **데이터 포맷** | CSV (일별 파일 분할 저장) |
+ORM/Query: Spring Data JPA, QueryDSL (초고속 추천 테이블 조용 서빙)
 
----
+Database: MySQL (Production RDB)
 
-## 2. 기술 스택 (Tech Stack)
+2.2 빅데이터 분석 및 배치 스택 (본 프로젝트 구현 영역)
+Ingestion: Python (BeautifulSoup), Crontab
 
-| 단계 | 기술 | 선정 이유 |
-|------|------|-----------|
-| **데이터 수집** | Python (BeautifulSoup, Requests), Crontab | 뮬 장터 HTML 파싱, 일별 자동 수집 스케줄링 |
-| **데이터 적재** | HDFS | Raw 데이터 보존 및 분산 저장소 활용 |
-| **데이터 전처리** | Apache Spark (PySpark) | 비정형 텍스트(브랜드명 정규화: "펜더"/"Fender"/"미펜" → "Fender") 처리, 가격 파싱, 결측치 제거 등 대량 데이터 정제에 적합 |
-| **데이터 분석** | Hive + Spark SQL | 시계열 시세 쿼리, 사분위 가격 산출, 판매 완료/미완료 비교 분석 |
-| **시각화** | Python (Matplotlib, Seaborn) | 브랜드별 시세 분포 차트, 카테고리별 추이 그래프, 감가율 시각화 |
+Storage: HDFS (HDP Sandbox 환경 내 분산 저장)
 
-### 핵심 기술 스택 조합: **Spark + Hive** (가산점 요건 충족)
+Processing/ML: Apache Spark (PySpark) (콘텐츠 기반 필터링 및 유사도 벡터 연산)
 
-- **Spark**: 비정형 텍스트 정제 및 Feature 추출 (제목에서 브랜드/모델/상태 파싱)
-- **Hive**: 정제된 데이터를 파티셔닝된 테이블로 관리하고, SQL 기반 집계 분석 수행
+Data Warehouse: Apache Hive (정제된 추천 매트릭스 관리 및 검증 SQL 수행)
 
----
+핵심 아키텍처 포인트 (Shared DB Batch): 24시간 구동되는 파이썬 API 서버 대신, Spark가 새벽 시간에 연산을 완료한 뒤 결과 테이블(user_recommendation)을 MySQL에 INSERT/UPDATE만 하고 종료되는 구조를 채택하여 인프라 비용을 0원으로 통제함.
 
-## 3. 구현 계획 (Implementation Plan)
+3. 구현 계획 (Implementation Plan)
+3.1 전체 아키텍처 파이프라인
+[외부 뮬 데이터 수집] ──> Python Crawler ──> HDFS (/raw)
+                                                │
+[내부 서비스 매물/로그] ──> DB덤프(CSV)  ──> HDFS (/app_data)
+                                                │
+                                        [PySpark 분산 연산]
+                                   - 비정형 텍스트 정제/정규화
+                                   - Cosine Similarity 유사도 연산
+                                                │
+                                        HDFS (/processed)
+                                                │
+                                    [Hive External Table]
+                                                │
+                                     [MySQL Production DB]
+                                  - user_recommendation 테이블 적재
+                                                │
+                                   [Java Spring Boot Server]
+                                  - QueryDSL을 통한 초고속 조회
+3.2 단계별 상세 구현
+데이터 수집 및 적재 (src/ingest/): Python을 통해 뮬의 9개 카테고리 매물 명세와 텍스트를 긁어 일별 CSV로 HDFS에 put 합니다.
 
-### 3.1 전체 파이프라인
+Spark 기반 텍스트 정제 및 특징 추출 (src/pipeline/): 제각각인 악기 명칭(예: "미펜 텔레", "Fender Telecaster")을 표준 이름으로 정규화하고, 픽업/기능별 태그 벡터를 생성합니다.
 
-```
-[뮬 장터] → [Python Crawler] → [CSV (일별)] → [HDFS /raw]
-                                                    ↓
-                                          [Spark 전처리/정규화]
-                                                    ↓
-                                          [HDFS /processed (Parquet)]
-                                                    ↓
-                                          [Hive External Table]
-                                                    ↓
-                                    [Spark SQL / HiveQL 분석]
-                                                    ↓
-                                    [시각화 (Matplotlib/Seaborn)]
-                                                    ↓
-                                    [적정가 레인지 결과 테이블]
-```
+추천 매트릭스 연산 (src/recommend/): PySpark를 통해 유저-아이템 간 콘텐츠 기반 필터링(Content-Based Filtering) 알고리즘을 수행하여 유저별 추천 매물 ID 리스트를 도출합니다.
 
-### 3.2 단계별 상세
+프로덕션 DB 동기화 (src/db_sync/): 대용량 연산 결과 중 오직 (user_id, recommended_item_ids, updated_at) 형태의 정제된 경량 데이터만 추출하여 프로덕션 MySQL로 커넥터를 통해 마이그레이션합니다.
 
-**① 데이터 수집 (src/ingest/)**
-- Python 스크립트로 뮬 장터 페이지를 카테고리별로 크롤링
-- 일별 CSV 파일로 저장 (예: `mule_2025-05-14_effects.csv`)
-- `time.sleep()`을 적용하여 서버 부하 최소화 (윤리적 수집)
-- Crontab 또는 Shell Script로 일 1회 자동 실행
-- 재실행 가능하도록 스크립트화
+Spring Boot 서빙: 스프링 백엔드에서는 복잡한 Python 연산 없이, 이미 계산되어 저장된 MySQL 테이블을 QueryDSL로 단순 select 하여 유저 홈 화면에 즉시 뿌려줍니다.
 
-**② 데이터 적재 (HDFS)**
-- 수집된 CSV 파일을 `hdfs dfs -put`으로 HDFS `/user/data/mule/raw/` 경로에 적재
-- 일자별 디렉토리 분할 저장 (예: `/user/data/mule/raw/2025-05-14/`)
-
-**③ 데이터 전처리 (src/pipeline/)**
-- Spark DataFrame을 활용한 데이터 정제:
-  - 제목에서 브랜드/모델명 키워드 추출 (정규표현식 + 브랜드 사전 매핑)
-  - 브랜드명 정규화 ("펜더", "fender", "미펜", "Fender" → "Fender")
-  - 가격 문자열 파싱 ("12만원", "120,000원", "12만" → 120000)
-  - 판매 완료 여부 판별 ("판매완료", "sold" 등 키워드 탐지)
-  - 결측치 및 이상치(가격 0원, 비정상 매물) 제거
-- 정제된 데이터를 Parquet 포맷으로 HDFS `/user/data/mule/processed/`에 저장
-
-**④ 데이터 분석 (src/analyze/)**
-- Hive External Table 생성 (Parquet 기반, 카테고리별 파티셔닝)
-- 분석 쿼리 수행:
-  - Q1: `GROUP BY brand, model` → 사분위(Q1, 중앙값, Q3) 가격 산출 → 적정가 레인지
-  - Q2: `판매완료 = true vs false` → 가격대별 판매율 비교, 평균 게시 기간 분석
-  - Q3: `GROUP BY category, month` → 월별 평균 시세 추이, 감가율 계산
-
-**⑤ 시각화 및 결과 정리**
-- 브랜드별 가격 분포 (Box Plot)
-- 카테고리별 월간 시세 추이 (Line Chart)
-- 판매 완료 vs 미판매 가격 분포 비교 (Histogram)
-- 감가율 상위/하위 모델 Top 10
-
-### 3.3 서비스 연계 (확장 방향)
-
-본 프로젝트의 분석 결과는 현재 운영 중인 중고 악기 거래 앱 서비스에 다음과 같이 활용할 수 있다:
-
-- 매물 등록 시: "비슷한 매물 평균가: 9~12만원 (현재 가격은 상위 20%)" 안내
-- 매물 조회 시: "이 매물은 평균 시세 대비 20% 저렴합니다" 꿀매물 라벨 표시
-- 분석 결과 테이블(CSV/SQL)만 서비스 DB에 주기적으로 반영하는 배치 방식으로, 추가 인프라 비용 없이 적용 가능
-
----
-
-## 4. GitHub Repository 구조
-
-```
-mule-instrument-price-pipeline/
-├── README.md                    # 프로젝트 개요, 실행 방법, 결과 요약
+4. GitHub Repository 구조
+mule-recommendation-batch-pipeline/
+├── README.md                    # 프로젝트 아키텍처 및 연동 가이드
 ├── data/
-│   ├── README.md                # 데이터 출처, 스키마 설명
-│   └── sample/                  # 샘플 데이터 (100~1000줄)
+│   ├── README.md                # 9개 메인 카테고리 스키마 정의
+│   └── sample/                  # 수집 데이터 샘플
 ├── src/
-│   ├── ingest/                  # 데이터 수집 스크립트
-│   │   ├── crawler.py           # 뮬 장터 크롤러
-│   │   ├── run_crawl.sh         # 크롤링 자동화 쉘 스크립트
-│   │   └── brand_dict.json      # 브랜드명 매핑 사전
-│   ├── pipeline/                # 전처리 코드
-│   │   ├── preprocess.py        # Spark 전처리 (정규화, 파싱)
-│   │   └── load_to_hdfs.sh      # HDFS 적재 스크립트
-│   └── analyze/                 # 분석 코드
-│       ├── hive_ddl.hql         # Hive 테이블 생성 DDL
-│       ├── analysis_queries.hql # 핵심 분석 쿼리 (Q1~Q3)
-│       └── visualize.py         # 시각화 스크립트
-├── results/                     # 분석 결과 그래프 및 요약
-└── .gitignore                   # raw 데이터 제외
-```
+│   ├── ingest/                  # 데이터 수집 (Python)
+│   │   └── crawler.py
+│   ├── pipeline/                # Spark 데이터 전처리 및 태깅
+│   │   └── spark_cleaner.py
+│   ├── recommend/               # PySpark 추천 알고리즘 엔진
+│   │   └── recommender_engine.py
+│   ├── analyze/                 # Hive 기반 분석 및 데이터 검증
+│   │   ├── hive_ddl.hql
+│   │   └── validation.sql
+│   └── db_sync/                 # MySQL 프로덕션 DB 적재 스크립트
+│       └── mysql_loader.py
+└── infra/                       # HDP Sandbox 및 DB 연결 설정
+5. 실행 방법 (HDP Sandbox & Production Link)
+Bash
+# 1. 외부 악기 데이터 및 매물 데이터 수집
+python src/ingest/crawler.py
 
----
+# 2. PySpark 추천 연산 실행 (오프라인 배치 가동)
+spark-submit --master local[*] src/recommend/recommender_engine.py
 
-## 5. 실행 방법 (HDP Sandbox 기준)
+# 3. Hive를 통한 추천 정합성 및 분포 검증
+hive -f src/analyze/validation.sql
 
-```bash
-# 1. 데이터 수집
-cd src/ingest/
-python crawler.py --category all --days 180
-bash run_crawl.sh
-
-# 2. HDFS 적재
-bash src/pipeline/load_to_hdfs.sh
-
-# 3. Spark 전처리
-spark-submit src/pipeline/preprocess.py
-
-# 4. Hive 테이블 생성 및 분석
-hive -f src/analyze/hive_ddl.hql
-hive -f src/analyze/analysis_queries.hql
-
-# 5. 시각화
-python src/analyze/visualize.py
-```
-
-상세 실행 가이드는 프로젝트 진행 중 업데이트 예정.
-
----
-
-## 6. AI Tool Usage
-
-- **Claude**: 프로젝트 주제 구체화 및 README 구조 설계 도움, 기술 스택 선정 시 비용 구조 조사
-
----
-
-## 7. 참고 자료
-
-- [Apache Spark 공식 문서](https://spark.apache.org/docs/latest/)
-- [Apache Hive 공식 문서](https://hive.apache.org/)
-- [뮬(Mule) 중고악기 장터](https://mule.co.kr/)
-- [Python BeautifulSoup 문서](https://www.crummy.com/software/BeautifulSoup/bs4/doc/)
+# 4. 분석 결과 데이터를 프로덕션 MySQL로 배치 적재
+python src/db_sync/mysql_loader.py
