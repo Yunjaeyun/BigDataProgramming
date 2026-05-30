@@ -1,4 +1,4 @@
-Markdown
+
 # 🎸 악기 메타데이터 및 유저 취향 기반 맞춤형 매물 추천 파이프라인 (Shared DB Batch Architecture)
 
 ## 1. 문제 정의 (Problem Definition)
