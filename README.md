@@ -108,12 +108,12 @@ hive -f src/analyze/validation.sql
 # 4. 분석 결과 데이터를 프로덕션 PostgreSQL로 배치 적재
 python src/db_sync/postgres_loader.py
 
-
+---
 
 ## 6. AI Tool Usage
 Claude: 프로젝트 주제 구체화 및 README 구조 설계 도움, 기술 스택 선정 시 비용 구조 조사
-
-7. 참고 자료
+---
+### 7. 참고 자료
 Apache Spark 공식 문서
 
 Apache Hive 공식 문서
