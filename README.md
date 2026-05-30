@@ -92,6 +92,7 @@ mule-recommendation-batch-pipeline/
 
 ---
 
+
 ## 5. 실행 방법 (HDP Sandbox & Production Link)
 
 ```bash
@@ -106,7 +107,10 @@ hive -f src/analyze/validation.sql
 
 # 4. 분석 결과 데이터를 프로덕션 PostgreSQL로 배치 적재
 python src/db_sync/postgres_loader.py
-6. AI Tool Usage
+
+
+
+## 6. AI Tool Usage
 Claude: 프로젝트 주제 구체화 및 README 구조 설계 도움, 기술 스택 선정 시 비용 구조 조사
 
 7. 참고 자료
