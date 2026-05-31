@@ -1,0 +1,20 @@
+# 대용량 raw 데이터 (100MB+)
+data/raw/
+data/sample/mule_processed.parquet
+data/sample/mule_processed_parquet/
+data/sample/user_recommendations_output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+
+# Spark 임시 파일
+derby.log
+metastore_db/
+spark-warehouse/
+
+# IDE
+.vscode/
+.idea/
