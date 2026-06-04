@@ -6,7 +6,7 @@ Q2: 행동 신호 3종 기여 점수 비율 (Stacked Bar + Pie)
 Q3: 하이브리드 추천 스코어 분포 (Histogram + KDE)
 """
 
-import re, glob, logging, platform, warnings
+import os, sys, re, glob, logging, platform, warnings
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +15,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.font_manager as fm
 import seaborn as sns
+
+os.environ["PYSPARK_PYTHON"]        = sys.executable
+os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO,
@@ -25,7 +28,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # 경로
 # ---------------------------------------------------------------------------
-PARQUET_PATH    = "data/sample/mule_processed_parquet"
+PARQUET_PATH    = "data/sample/mule_processed.parquet"
 LIKES_PATH      = "data/sample/post_likes.csv"
 SEARCHES_PATH   = "data/sample/recent_searches.csv"
 USER_POSTS_PATH = "data/sample/user_posts.csv"
@@ -393,10 +396,71 @@ def _save(fig, filename):
 
 
 # ---------------------------------------------------------------------------
+# Spark SQL 핵심 통계 분석
+# 선택 이유: pandas 대비 분산 처리로 수백만 건 확장 가능,
+#            동일 SparkSession으로 파이프라인 일관성 유지
+# ---------------------------------------------------------------------------
+def analyze_with_spark():
+    from pyspark.sql import SparkSession
+
+    spark = (SparkSession.builder
+             .appName("MuleVisualizer")
+             .master("local[*]")
+             .getOrCreate())
+    spark.sparkContext.setLogLevel("WARN")
+
+    try:
+        df = spark.read.parquet(PARQUET_PATH)
+        df.createOrReplaceTempView("items")
+
+        logger.info("=== Spark SQL: Q1 카테고리별 가격 통계 ===")
+        spark.sql("""
+            SELECT category,
+                   COUNT(*)                                    AS item_count,
+                   ROUND(percentile_approx(price_krw, 0.25), 0) AS q1_krw,
+                   ROUND(percentile_approx(price_krw, 0.50), 0) AS median_krw,
+                   ROUND(percentile_approx(price_krw, 0.75), 0) AS q3_krw,
+                   ROUND(AVG(price_krw), 0)                   AS avg_krw
+            FROM items
+            WHERE price_krw > 0
+            GROUP BY category
+            ORDER BY median_krw DESC
+        """).show(truncate=False)
+
+        logger.info("=== Spark SQL: Q2 브랜드별 매물 수 TOP 10 ===")
+        spark.sql("""
+            SELECT brand,
+                   COUNT(*) AS item_count,
+                   ROUND(AVG(price_krw), 0) AS avg_price_krw,
+                   SUM(CASE WHEN is_sold = true THEN 1 ELSE 0 END) AS sold_count
+            FROM items
+            GROUP BY brand
+            ORDER BY item_count DESC
+            LIMIT 10
+        """).show(truncate=False)
+
+        logger.info("=== Spark SQL: 판매 완료율 분석 ===")
+        spark.sql("""
+            SELECT category,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN is_sold = true THEN 1 ELSE 0 END) AS sold,
+                   ROUND(SUM(CASE WHEN is_sold = true THEN 1 ELSE 0 END)
+                         * 100.0 / COUNT(*), 1) AS sold_pct
+            FROM items
+            GROUP BY category
+            ORDER BY sold_pct DESC
+        """).show(truncate=False)
+
+    finally:
+        spark.stop()
+
+
+# ---------------------------------------------------------------------------
 # 진입점
 # ---------------------------------------------------------------------------
 def main():
     setup_font()
+    analyze_with_spark()          # Spark SQL 핵심 분석 (강의 기술 스택)
     items_df              = load_parquet_safe(PARQUET_PATH)
     likes, searches, posts = load_action_logs()
 
